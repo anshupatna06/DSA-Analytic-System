@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+matplotlib
+scikit-learn
+joblib
+requests
+sqlalchemy
+pymysql
+cryptography
+bcrypt
