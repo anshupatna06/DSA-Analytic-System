@@ -9,3 +9,5 @@ sqlalchemy
 pymysql
 cryptography
 bcrypt
+beautifulsoup4
+psycopg2-binary
