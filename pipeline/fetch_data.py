@@ -2,124 +2,172 @@
 
 import datetime as dt
 from sqlalchemy import text
+
 from database import get_engine
-from utils.leetcode_api import fetch_profile_counts
+from utils.aggregator import fetch_all_platform_stats
 
 
-def fetch_usernames_from_db(conn):
-    """Fetch leetcode usernames from MySQL instead of users.txt."""
+def fetch_profiles_from_db(conn):
+    """
+    Fetch platform usernames from platform_profiles.
+    Currently supports only 'leetcode'.
+    """
     rows = conn.execute(
-        text("SELECT leetcode_username FROM leetcode_profiles")
-    ).fetchall()
+        text("""
+            SELECT username, platform, platform_username
+            FROM platform_profiles
+            WHERE platform = 'leetcode'
+        """)
+    ).mappings().all()
 
-    return [r[0] for r in rows if r[0]]
+    return rows
 
 
 def run_fetch():
-    today = dt.datetime.utcnow().strftime("%Y-%m-%d")
-    today_dt = dt.datetime.strptime(today, "%Y-%m-%d")
+    today_dt = dt.datetime.utcnow()
+    today_date = today_dt.date()
+    today = today_date.strftime("%Y-%m-%d")
 
     # 🔴 retention window (30 days)
-    retention_cutoff = (today_dt - dt.timedelta(days=30)).strftime("%Y-%m-%d")
+    retention_cutoff = (today_date - dt.timedelta(days=30)).strftime("%Y-%m-%d")
 
     engine = get_engine()
 
     with engine.begin() as conn:
 
         # =====================================================
-        # 🔴 AUTO-CLEANUP: DELETE DATA OLDER THAN 30 DAYS
+        # 🔴 AUTO-CLEANUP (30 DAYS)
         # =====================================================
         deleted_data = conn.execute(
-            text("""
-                DELETE FROM dsa_data
-                WHERE date < :cutoff
-            """),
+            text("DELETE FROM dsa_data WHERE date < :cutoff"),
             {"cutoff": retention_cutoff}
         ).rowcount
 
         deleted_features = conn.execute(
-            text("""
-                DELETE FROM dsa_features
-                WHERE date < :cutoff
-            """),
+            text("DELETE FROM dsa_features WHERE date < :cutoff"),
             {"cutoff": retention_cutoff}
         ).rowcount
 
         print(
-            f"[cleanup] Removed {deleted_data} old rows from dsa_data, "
+            f"[cleanup] Removed {deleted_data} rows from dsa_data, "
             f"{deleted_features} from dsa_features"
         )
 
         # =====================================================
-        # LOAD USERNAMES
+        # LOAD PLATFORM PROFILES
         # =====================================================
-        users = fetch_usernames_from_db(conn)
-        if not users:
-            print("[fetch] No usernames found in leetcode_profiles.")
+        profiles = fetch_profiles_from_db(conn)
+
+        if not profiles:
+            print("[fetch] No platform profiles found.")
             return
 
         # =====================================================
-        # PROCESS EACH USER
+        # PROCESS EACH PROFILE
         # =====================================================
-        for u in users:
+        for row in profiles:
+            platform = row["platform"]
+            platform_username = row["platform_username"]
 
-            # -- 1️⃣ Skip if today's snapshot already exists
-            existing = conn.execute(
-                text("""
-                    SELECT id FROM dsa_data
-                    WHERE username = :u AND date = :d
-                """),
-                {"u": u, "d": today}
-            ).fetchone()
-
-            if existing:
-                print(f"[fetch] Already logged today → {u}")
-                continue
-
-            # -- 2️⃣ Fetch LeetCode stats
-            stats = fetch_profile_counts(u)
+            # -------------------------------------------
+            # 1️⃣ Fetch stats
+            # -------------------------------------------
+            stats = fetch_all_platform_stats(platform, platform_username)
             if not stats:
-                print(f"[fetch] Failed to fetch data for {u}")
+                print(f"[fetch] Failed for {platform_username}")
                 continue
 
-            # -- 3️⃣ Determine correct week number
+            # -------------------------------------------
+            # 2️⃣ Fetch LAST ROW (for week logic)
+            # -------------------------------------------
             last_row = conn.execute(
                 text("""
-                    SELECT week, date FROM dsa_data
+                    SELECT week, week_start_date
+                    FROM dsa_data
                     WHERE username = :u
-                    ORDER BY id DESC LIMIT 1
+                    ORDER BY id DESC
+                    LIMIT 1
                 """),
-                {"u": u}
+                {"u": platform_username}
             ).mappings().first()
 
             if last_row:
                 last_week = last_row["week"]
-                last_date = dt.datetime.strptime(last_row["date"], "%Y-%m-%d")
-                days_passed = (today_dt - last_date).days
+                week_start = last_row["week_start_date"]
 
-                next_week = last_week + 1 if days_passed >= 7 else last_week
+                days_since_week_start = (today_date - week_start).days
+
+                if days_since_week_start >= 7:
+                    next_week = last_week + 1
+                    new_week_start = today_date
+                else:
+                    next_week = last_week
+                    new_week_start = week_start
             else:
-                next_week = 1  # First entry ever
+                next_week = 1
+                new_week_start = today_date
 
-            # -- 4️⃣ Insert today's snapshot
-            conn.execute(
+            # -------------------------------------------
+            # 3️⃣ Check if TODAY already exists
+            # -------------------------------------------
+            today_row = conn.execute(
                 text("""
-                    INSERT INTO dsa_data
-                    (username, week, date, easy_solved, medium_solved, hard_solved, total_solved)
-                    VALUES (:u, :w, :d, :e, :m, :h, :t)
+                    SELECT id
+                    FROM dsa_data
+                    WHERE username = :u AND date = :d
                 """),
-                {
-                    "u": u,
-                    "w": next_week,
-                    "d": today,
-                    "e": stats["easy_solved"],
-                    "m": stats["medium_solved"],
-                    "h": stats["hard_solved"],
-                    "t": stats["total_solved"],
-                }
-            )
+                {"u": platform_username, "d": today}
+            ).mappings().first()
 
-            print(f"[fetch] Inserted week {next_week} → {u}")
+            # -------------------------------------------
+            # 4️⃣ UPDATE if exists, else INSERT
+            # -------------------------------------------
+            if today_row:
+                conn.execute(
+                    text("""
+                        UPDATE dsa_data
+                        SET
+                            week = :w,
+                            week_start_date = :ws,
+                            easy_solved = :e,
+                            medium_solved = :m,
+                            hard_solved = :h,
+                            total_solved = :t
+                        WHERE id = :id
+                    """),
+                    {
+                        "w": next_week,
+                        "ws": new_week_start,
+                        "e": stats["easy_solved"],
+                        "m": stats["medium_solved"],
+                        "h": stats["hard_solved"],
+                        "t": stats["total_solved"],
+                        "id": today_row["id"],
+                    }
+                )
+                print(f"[fetch] Updated week {next_week} → {platform_username}")
+
+            else:
+                conn.execute(
+                    text("""
+                        INSERT INTO dsa_data
+                        (username, week, week_start_date, date,
+                         easy_solved, medium_solved, hard_solved, total_solved)
+                        VALUES
+                        (:u, :w, :ws, :d, :e, :m, :h, :t)
+                    """),
+                    {
+                        "u": platform_username,
+                        "w": next_week,
+                        "ws": new_week_start,
+                        "d": today,
+                        "e": stats["easy_solved"],
+                        "m": stats["medium_solved"],
+                        "h": stats["hard_solved"],
+                        "t": stats["total_solved"],
+                    }
+                )
+                print(f"[fetch] Inserted week {next_week} → {platform_username}")
 
     engine.dispose()
 
