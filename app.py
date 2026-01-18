@@ -8,14 +8,12 @@ from database import get_engine,init_tables_and_migrate
 from create_admin import create_initial_admin
 from pipeline.run_pipeline import run_full_pipeline
 from pipeline.predict import predict_for_username
-from visualize import plot_weekly_progress, plot_growth_curve, plot_user_comparison, plot_difficulty_ratio, plot_weekly_breakdown,plot_hard_density,plot_rolling_growth 
+from visualize import plot_weekly_progress, plot_growth_curve, plot_user_comparison, plot_difficulty_ratio, plot_weekly_breakdown,plot_hard_density,plot_rolling_growth,plot_growth_with_drift 
 from reset_db import reset_database
-# TEMP: run migration once
-# TEMP cleanup
-
-
 
 init_tables_and_migrate()
+
+
 # -----------------------------
 # Initialize DB & Admin
 # -----------------------------
@@ -162,8 +160,18 @@ def load_data():
 # -----------------------------
 menu = st.sidebar.radio(
     "Navigate",
-    ["Dashboard", "Leaderboard", "Visual Charts","Advanced Charts", "Predict Next Week","My LeetCode Profile", "Run Pipeline", "Admin Tools"]
+    [
+        "Dashboard",
+        "Leaderboard",
+        "Visual Charts",
+        "Advanced Charts",
+        "Predict Next Week",
+        "My Coding Profiles",   # 🔁 renamed
+        "Run Pipeline",
+        "Admin Tools"
+    ]
 )
+
 
 
 # -----------------------------
@@ -184,6 +192,38 @@ if menu == "Dashboard":
 
         st.subheader("📊 Growth Curve")
         st.pyplot(plot_growth_curve(user_df))
+
+    # -----------------------------
+    # 🚨 Drift Alert
+    # -----------------------------
+    # -----------------------------
+    # Drift Alerts (Dashboard)
+    # -----------------------------
+    st.subheader("🚨 Performance Alerts")
+
+    username = st.selectbox(
+        "Select user",
+        df_feat["username"].unique(),
+        key="performance_alert_user"
+    )
+
+    user_df = df_feat[df_feat["username"] == username].sort_values("week")
+    latest = user_df.iloc[-1]
+
+    if latest.get("drift_flag", 0):
+        st.error(
+            f"⚠️ Change in learning pace detected.\n\n"
+            f"Reason: **{latest.get('drift_reason', 'Unspecified')}**\n\n"
+            "This is not a failure — consider adjusting your weekly plan."
+        )
+    elif latest["weekly_growth"] < 0:
+        st.warning(
+            f"📉 Weekly drop detected: "
+            f"{latest['weekly_growth']} problems compared to last week."
+        )
+    else:
+        st.success("✅ No performance drift detected. Keep going!")
+
 
 
 # -----------------------------
@@ -216,6 +256,7 @@ elif menu == "Visual Charts":
         df = df_feat[df_feat["username"] == username]
         st.pyplot(plot_weekly_progress(df))
         st.pyplot(plot_growth_curve(df))
+        st.pyplot(plot_growth_with_drift(df))
 
 # -----------------------------
 # Advanced Charts (User Comparison + Advanced analytics)
@@ -279,8 +320,25 @@ elif menu == "Advanced Charts":
     # -----------------------------
     st.subheader("📈 Rolling 3-Week Growth Trend")
     st.pyplot(plot_rolling_growth(user_df))
+    
+    # -----------------------------
+    # Drift Timeline
+    # -----------------------------
+    st.subheader("📉 Drift Timeline")
 
+    drift_df = user_df[user_df.get("drift_flag", 0) == 1]
 
+    if drift_df.empty:
+        st.info("No drift events detected so far.")
+    else:
+        st.dataframe(
+            drift_df[
+                ["week", "weekly_growth", "rolling_growth_3week",
+                 "drift_flag", "drift_reason"]
+            ]
+        )
+
+    
 # -----------------------------
 # Prediction
 # -----------------------------
@@ -296,63 +354,81 @@ elif menu == "Predict Next Week":
             pred = predict_for_username(username)
             st.success(f"Prediction: {pred:.2f}")
 
+
 # -----------------------------
-# My LeetCode Profile (User Input)
+# My Coding Profiles (Multi-Platform)
 # -----------------------------
-elif menu == "My LeetCode Profile":
-    st.header("🧑‍💻 My LeetCode Username")
+elif menu == "My Coding Profiles":
+    st.header("🧑‍💻 My Coding Profiles")
 
     engine = get_engine()
+    username = st.session_state["username"]
 
-    # Fetch current linked username
+    platforms = ["leetcode", "gfg", "codeforces", "hackerrank"]
+
     existing = pd.read_sql(
-        text("SELECT leetcode_username FROM leetcode_profiles WHERE username = :u"),
+        text("""
+            SELECT platform, platform_username
+            FROM platform_profiles
+            WHERE username = :u
+        """),
         engine,
-        params={"u": st.session_state["username"]}
+        params={"u": username}
     )
 
-    current_un = None
-    if not existing.empty:
-        current_un = existing.iloc[0]["leetcode_username"]
+    existing_map = dict(zip(existing["platform"], existing["platform_username"]))
 
-    st.write("### Linked LeetCode Username:")
-    if current_un:
-        st.success(f"Linked: **{current_un}**")
-    else:
-        st.info("No LeetCode username linked yet.")
+    for platform in platforms:
+        st.subheader(f"🔗 {platform.capitalize()}")
 
-    new_un = st.text_input("Enter / Update LeetCode username:")
+        current = existing_map.get(platform)
+        if current:
+            st.success(f"Linked: **{current}**")
+        else:
+            st.info("Not linked")
 
-    if st.button("Save Username"):
-        try:
-            with engine.begin() as conn:
-                conn.execute(
-                    text("""
-                        INSERT INTO leetcode_profiles (username, leetcode_username)
-                        VALUES (:u, :lu)
-                        ON DUPLICATE KEY UPDATE leetcode_username = :lu
-                    """),
-                    {"u": st.session_state["username"], "lu": new_un}
-                )
-            st.success("LeetCode username updated successfully!")
-            st.cache_data.clear()
-        except Exception as e:
-            st.error(str(e))
+        new_un = st.text_input(
+            f"Enter {platform} username",
+            value=current if current else "",
+            key=f"{platform}_input"
+        )
 
-    if current_un:
-        if st.button("Remove Username"):
-            try:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button(f"Save {platform}", key=f"save_{platform}"):
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO platform_profiles (username, platform, platform_username)
+                                VALUES (:u, :p, :pu)
+                                ON DUPLICATE KEY UPDATE platform_username = :pu
+                            """),
+                            {"u": username, "p": platform, "pu": new_un}
+                        )
+                    st.success(f"{platform.capitalize()} profile updated")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+        with col2:
+            if current and st.button(f"Remove {platform}", key=f"del_{platform}"):
                 with engine.begin() as conn:
                     conn.execute(
-                        text("DELETE FROM leetcode_profiles WHERE username = :u"),
-                        {"u": st.session_state["username"]}
+                        text("""
+                            DELETE FROM platform_profiles
+                            WHERE username = :u AND platform = :p
+                        """),
+                        {"u": username, "p": platform}
                     )
-                st.success("LeetCode username removed.")
+                st.warning(f"{platform.capitalize()} profile removed")
                 st.cache_data.clear()
-            except Exception as e:
-                st.error(str(e))
+                st.rerun()
 
     engine.dispose()
+
 
 
 
@@ -416,4 +492,11 @@ elif menu == "Admin Tools":
     if st.button("RESET DATABASE NOW"):
         reset_database()
         st.success("Database cleared!")
+
+    df = pd.read_sql(
+    "SELECT username, week, date, week_start_date FROM dsa_data",
+    get_engine()
+    )
+    st.dataframe(df)
+
 
