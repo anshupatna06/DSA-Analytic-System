@@ -1,25 +1,35 @@
 # database.py
 import os
-import pymysql
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
-pymysql.install_as_MySQLdb()
 
 
 def get_engine():
-    host = os.getenv("MYSQLHOST")
-    user = os.getenv("MYSQLUSER")
-    password = os.getenv("MYSQLPASSWORD")
-    port = os.getenv("MYSQLPORT")
-    db = os.getenv("MYSQLDATABASE")
+    host = os.getenv("DB_HOST")
+    user = os.getenv("DB_USER")
+    password = os.getenv("DB_PASSWORD")
+    port = os.getenv("DB_PORT")
+    db = os.getenv("DB_NAME")
 
     if not all([host, user, password, port, db]):
-        raise RuntimeError("MySQL environment variables missing!")
+        raise RuntimeError("Database environment variables missing!")
 
-    url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{db}"
-    return create_engine(url, pool_recycle=3600, pool_pre_ping=True)
+    url = (
+        f"postgresql+psycopg2://{user}:{password}"
+        f"@{host}:{port}/{db}"
+        "?sslmode=require"
+    )
+
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=5
+    )
+
+
 
 
 def init_tables_and_migrate():
@@ -32,7 +42,7 @@ def init_tables_and_migrate():
         # =============================================================
         conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS dsa_data (
-                id INT AUTO_INCREMENT PRIMARY KEY,
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 username VARCHAR(100),
                 week INT,
                 easy_solved INT,
@@ -42,20 +52,19 @@ def init_tables_and_migrate():
             );
         """)
 
+
         # Add date column
-        try:
-            conn.exec_driver_sql("ALTER TABLE dsa_data ADD COLUMN date VARCHAR(20)")
-        except OperationalError:
-            pass
+        
 
         # =============================================================
         # dsa_features
         # =============================================================
         conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS dsa_features (
-                id INT AUTO_INCREMENT PRIMARY KEY,
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 username VARCHAR(100),
                 week INT,
+                
                 total_solved INT,
                 easy_solved INT,
                 medium_solved INT,
@@ -77,18 +86,23 @@ def init_tables_and_migrate():
                 rolling_growth_3week FLOAT
             );
         """)
+        # 🔴 ADD week_start_date if missing (Postgres-safe)
+        
+        conn.exec_driver_sql("""
+            ALTER TABLE dsa_features
+            ADD COLUMN IF NOT EXISTS week_start_date DATE
+        """)
+        print("✅ Added week_start_date to dsa_features")
+        
 
-        try:
-            conn.exec_driver_sql("ALTER TABLE dsa_features ADD COLUMN date VARCHAR(20)")
-        except OperationalError:
-            pass
+        
 
         # =============================================================
         # LOGIN USERS TABLE
         # =============================================================
         conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 username VARCHAR(100) UNIQUE,
                 password_hash VARCHAR(200),
                 is_admin BOOLEAN DEFAULT FALSE
@@ -96,50 +110,30 @@ def init_tables_and_migrate():
         """)
 
         # =============================================================
-        # NEW TABLE: leetcode_profiles  (username → leetcode_username)
+        # PLATFORM PROFILES (MULTI-PLATFORM SUPPORT)
         # =============================================================
         conn.exec_driver_sql("""
-            CREATE TABLE IF NOT EXISTS leetcode_profiles (
-                id INT AUTO_INCREMENT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS platform_profiles (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 username VARCHAR(100) NOT NULL,
-                leetcode_username VARCHAR(100) NOT NULL,
-                UNIQUE(username),
-                UNIQUE(leetcode_username),
-                CONSTRAINT fk_user
-                      FOREIGN KEY (username)
-                      REFERENCES users(username)
-                      ON DELETE CASCADE
+                platform VARCHAR(50) NOT NULL,
+                platform_username VARCHAR(100) NOT NULL,
+                UNIQUE(platform, platform_username),
+                UNIQUE(username, platform),
+                CONSTRAINT fk_platform_user
+                     FOREIGN KEY (username)
+                     REFERENCES users(username)
+                     ON DELETE CASCADE
                 );
         """)
+
 
         # =============================================================
         # MIGRATION FROM users.txt  → leetcode_profiles
         # =============================================================
 
         # Check if migration already done
-        result = conn.execute(text("SELECT COUNT(*) AS cnt FROM leetcode_profiles")).mappings().first()
-        if result["cnt"] == 0:
-
-            USERS_FILE = "data/users.txt"
-
-            if os.path.exists(USERS_FILE):
-                try:
-                    with open(USERS_FILE, "r") as f:
-                        for line in f:
-                            username = line.strip()
-                            if username:
-                                conn.execute(
-                                    text("""
-                                        INSERT IGNORE INTO leetcode_profiles (app_username, leetcode_username)
-                                        VALUES (:u, :u)
-                                    """),
-                                    {"u": username}
-                                )
-                    print("✅ Migrated users.txt → leetcode_profiles")
-                except Exception as e:
-                    print("⚠️ Migration failed:", e)
-            else:
-                print("ℹ️ No users.txt found, skipping migration.")
+        
 
     engine.dispose()
     print("✅ All tables created + migration complete.")
