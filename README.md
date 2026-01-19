@@ -1,57 +1,153 @@
-# DSA-Analytic-System
-A data-driven system to track, analyze, and predict DSA learning progress using real practice data.
+DSA Analytics System
 
-🚀 Features
+End-to-End Learning Analytics Platform for Competitive Programming
 
-Real-time LeetCode data ingestion
+A production-style analytics system that ingests real coding-platform data, engineers learning behavior features, detects performance drift, and provides actionable insights through an interactive dashboard.
 
-Weekly & daily progress tracking
+This project was built to go beyond simple problem counts and instead model learning consistency, stagnation, and performance drops over time.
 
-Feature engineering for learning patterns
+🔍 What Problem Does This Solve?
 
-Machine Learning–based growth prediction
+Most competitive programmers track only:
 
-Interactive analytics dashboard (Streamlit)
+Total problems solved
 
-Secure user authentication
+Daily streaks
 
-🧠 Tech Stack
+This system answers deeper questions:
 
-Python
+Am I improving consistently or stagnating?
 
-SQL (MySQL)
+Did my learning pace suddenly drop?
 
-Pandas, NumPy
+Am I inactive despite a high total score?
 
-Scikit-learn
+How does my weekly learning trend evolve?
 
-Streamlit
+🚀 Core Features
+📥 Multi-Platform Data Ingestion
 
-SQLAlchemy
+Supports LeetCode (extensible to GFG, Codeforces, HackerRank)
 
-🔗 Live Demo
+Daily snapshots with deduplication
+
+Platform-agnostic aggregation layer
+
+🧠 Feature Engineering on Learning Behavior
+
+Weekly growth & rolling averages
+
+Difficulty ratios (easy / medium / hard)
+
+Consistency & balance scores
+
+Inactivity tracking across weeks
+
+🚨 Performance Drift Detection
+
+Detects learning issues using:
+
+Sudden drops in weekly growth
+
+Consistent decline over consecutive weeks
+
+Inactivity drift (no progress despite past activity)
+
+Each drift event is stored with a human-readable reason.
+
+🤖 Machine Learning Prediction
+
+Predicts next-week growth using historical behavior
+
+Trained on engineered learning features
+
+Designed for extensibility to advanced models
+
+📊 Interactive Analytics Dashboard
+
+User-level dashboards
+
+Leaderboard & comparison views
+
+Drift alerts and trend visualizations
+
+Built with Streamlit
+
+🔐 Secure Authentication & User Profiles
+
+User login system
+
+Multi-platform profile linking
+
+Admin-controlled pipeline execution
+
+🏗️ System Architecture
+Platform APIs
+     ↓
+Daily Data Ingestion
+     ↓
+PostgreSQL (Snapshots)
+     ↓
+Feature Engineering Pipeline
+     ↓
+Drift Detection + ML Prediction
+     ↓
+Interactive Streamlit Dashboard
+
+
+Designed with production safety in mind:
+
+Idempotent ingestion
+
+Safe database migrations
+
+Retention-aware cleanup
+
+Modular pipeline stages
+
+🧰 Tech Stack
+
+Language: Python
+
+Data: Pandas, NumPy
+
+Database: PostgreSQL
+
+ORM: SQLAlchemy
+
+ML: Scikit-learn
+
+Dashboard: Streamlit
+
+Deployment: Hugging Face Spaces
+
+🌐 Live Demo
 
 👉 https://huggingface.co/spaces/anshupatna06/dsa-analytic-system
 
-🏗️ Architecture Overview
+📌 Key Learnings & Engineering Highlights
 
-Fetch coding stats via platform APIs
+Designed real-world data pipelines, not toy scripts
 
-Store snapshots in MySQL
+Handled database migrations across MySQL → PostgreSQL
 
-Engineer learning features
+Built drift logic inspired by production ML monitoring
 
-Train ML model on historical data
+Learned system-level debugging (data consistency, time windows, schema evolution)
 
-Visualize insights through dashboard
+Balanced ML modeling with practical analytics
 
-⚠️ Note
+🔮 Future Improvements
 
-👉This project is under active development.
-Upcoming features include:
+Full support for GFG, Codeforces, HackerRank
 
-Multi-platform support (GFG, Codeforces, HackerRank)
+Advanced drift thresholds & alert tuning
 
-Advanced learning analytics
+Personalized learning recommendations
 
-Improved prediction models
+Model explainability for predictions
+
+⚠️ Project Status
+
+Actively maintained and iterated.
+Built as a learning-to-production bridge, not a one-off demo.
